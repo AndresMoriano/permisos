@@ -122,9 +122,20 @@
    ===================================================================== */
 
 const DIRECTOR_CEDULA = "1123311568";
+
+/* ═══════════════════════════════════════════════════════════════════
+   CONEXIÓN CON GOOGLE SHEETS — PEGA AQUÍ TU DIRECCIÓN DE APPS SCRIPT
+   ───────────────────────────────────────────────────────────────────
+   Al dejarla escrita aquí, CUALQUIER dispositivo que abra el
+   aplicativo queda conectado automáticamente, sin configurar nada.
+   Debe empezar por https://script.google.com/ y terminar en /exec
+   ═══════════════════════════════════════════════════════════════════ */
+const SHEETS_URL_FIJA = "https://script.google.com/macros/s/AKfycbybjCjGLQ-5OAtaKvS7nW4cU6RNUl0a6ivrT7LBGymoc5HBPjDmgtHo_6cxNpFF2GkL9w/exec";
+
 const K_PERM = "permisos_udr";
 const K_FUNC = "funcionarios_udr";
 const K_SHEETS = "permisos_sheets_url";
+const K_REMOTE = "permisos_remotos";
 
 const CAUSAS = ["Cita médica","Incapacidad","Calamidad doméstica","Licencia",
   "Asuntos personales","Comisión / capacitación","Cita odontológica","Diligencia bancaria","Otro"];
@@ -145,6 +156,13 @@ let dirOK = false;
 /* ---------- almacenamiento ---------- */
 const load = (k, def) => { try{ const v=localStorage.getItem(k); return v?JSON.parse(v):def; }catch(e){ return def; } };
 const save = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ return false; } };
+
+/* Dirección efectiva de envío: la fija del archivo, o la guardada en el equipo. */
+function urlSheets(){
+  const fija = (SHEETS_URL_FIJA||"").trim();
+  if(/^https:\/\/script\.google\.com\//.test(fija)) return fija;
+  return (load(K_SHEETS,"")||"").trim();
+}
 
 /* La dirección de Google Sheets puede venir incrustada en el enlace (?s=...)
    para que los docentes no tengan que configurar nada en su celular. */
@@ -273,10 +291,14 @@ function render(){
 
 /* ---------- 1. SOLICITAR ---------- */
 function vSolicitar(){
+  const conectado = !!urlSheets();
   return `
   <div class="card">
-    <h2>Solicitar permiso</h2>
+    <h2>Solicitar permiso o novedad</h2>
     <p class="sub">Registra tu solicitud. Puede ser de unos minutos, horas o días completos.</p>
+    ${conectado
+      ? `<div class="hint" style="color:#1F6B41;margin:-8px 0 14px;">● Conectado — tu solicitud le llegará al director.</div>`
+      : `<div class="msg err">⚠ <b>Este dispositivo no está conectado.</b> Tu solicitud se guardará solo aquí y el director no la verá. Avísale para que te envíe el enlace correcto.</div>`}
     <div class="fld">
       <label>Número de identificación</label>
       <input id="ced" inputmode="numeric" placeholder="Ej: 1123456789" oninput="buscarFunc()">
@@ -520,8 +542,10 @@ function vDirector(){
       <button class="btn ghost" onclick="probarSheets()">Probar conexión</button>
     </div>
     <div id="msgSh"></div>
-    <div class="hint">Estado: ${url?'<b style="color:#1F6B41;">● Activo</b>':'<b style="color:#93A2BE;">● Sin configurar</b>'}
-      · Requiere actualizar el código de Apps Script (ver instructivo).</div>
+    <div class="hint">Estado: ${urlSheets()?'<b style="color:#1F6B41;">● Activo</b>':'<b style="color:#93A2BE;">● Sin configurar</b>'}
+      ${/^https:\/\/script\.google\.com\//.test((SHEETS_URL_FIJA||"").trim())
+        ? '· <b>Dirección grabada en el archivo</b>: todos los dispositivos quedan conectados automáticamente.'
+        : '· Solo configurado en este equipo. Para que funcione en todos los celulares, graba la dirección en el archivo (ver instructivo) o comparte el enlace de abajo.'}</div>
 
     <div class="sect-t">Enlace para los docentes</div>
     <p class="sub">Este enlace <b>ya lleva la conexión incluida</b>. Quien lo abra queda configurado
@@ -668,7 +692,7 @@ function payloadPermiso(reg){
   };
 }
 function enviarSheets(reg){
-  const u=load(K_SHEETS,""); if(!u) return false;
+  const u=urlSheets(); if(!u) return false;
   const body=JSON.stringify(payloadPermiso(reg));
   try{
     if(navigator.sendBeacon && navigator.sendBeacon(u,new Blob([body],{type:"text/plain;charset=utf-8"}))) return true;
