@@ -128,6 +128,10 @@ const K_SHEETS = "permisos_sheets_url";
 
 const CAUSAS = ["Cita médica","Incapacidad","Calamidad doméstica","Licencia",
   "Asuntos personales","Comisión / capacitación","Cita odontológica","Diligencia bancaria","Otro"];
+const CLASES = [
+  {v:"Permiso", t:"Permiso — autorización para ausentarme"},
+  {v:"Novedad", t:"Novedad — reporte de algo que ya ocurrió"},
+];
 const TIPOS = [
   {v:"minutos", t:"Minutos (llegada tarde o salida antes)"},
   {v:"horas",   t:"Algunas horas del día"},
@@ -141,6 +145,20 @@ let dirOK = false;
 /* ---------- almacenamiento ---------- */
 const load = (k, def) => { try{ const v=localStorage.getItem(k); return v?JSON.parse(v):def; }catch(e){ return def; } };
 const save = (k, v) => { try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ return false; } };
+
+/* La dirección de Google Sheets puede venir incrustada en el enlace (?s=...)
+   para que los docentes no tengan que configurar nada en su celular. */
+(function configDesdeEnlace(){
+  try{
+    const s = new URLSearchParams(location.search).get("s");
+    if(!s) return;
+    const url = decodeURIComponent(escape(atob(s.replace(/-/g,"+").replace(/_/g,"/"))));
+    if(/^https:\/\/script\.google\.com\//.test(url)){
+      save(K_SHEETS, url);
+      history.replaceState({}, "", location.pathname);   // limpia la barra de direcciones
+    }
+  }catch(e){}
+})();
 let PERM = load(K_PERM, []);
 let FUNC = load(K_FUNC, []);
 /* Base inicial de funcionarios (se puede reemplazar cargando un Excel) */
@@ -269,6 +287,10 @@ function vSolicitar(){
       <input id="nom" placeholder="Escribe tu nombre completo">
     </div>
     <div class="fld">
+      <label>¿Qué vas a registrar?</label>
+      <select id="clase">${CLASES.map(c=>`<option value="${c.v}">${c.t}</option>`).join("")}</select>
+    </div>
+    <div class="fld">
       <label>Tipo de permiso</label>
       <select id="tipo" onchange="cambioTipo()">${TIPOS.map(t=>`<option value="${t.v}">${t.t}</option>`).join("")}</select>
     </div>
@@ -356,6 +378,7 @@ function enviar(){
 
   const reg={ id:"p"+Date.now().toString(36)+Math.floor(Math.random()*1000),
     cedula:ced, nombres:nom, unidad:f?.unidad||"", contrat:f?.contrat||"",
+    clase:(document.getElementById("clase")?.value||"Permiso"),
     tipo, fecha:f1, fecha_fin:f2, hora_ini:h1, hora_fin:h2, minutos:mins, dias,
     causa, observacion:obs, estado:"Solicitado", creado:nowISO(), resuelto:"" };
   PERM.push(reg);
@@ -396,7 +419,7 @@ function pintaMis(){
     <table><thead><tr><th>Fecha</th><th>Tipo</th><th>Tiempo</th><th>Causa</th><th>Estado</th></tr></thead><tbody>
     ${mios.map(p=>`<tr>
       <td data-l="Fecha">${esc(p.fecha)}${p.tipo==="rango"?" → "+esc(p.fecha_fin):""}</td>
-      <td data-l="Tipo">${esc(labelTipo(p))}</td>
+      <td data-l="Tipo">${esc(p.clase||"Permiso")}<br><span style="color:#93A2BE;font-size:12px;">${esc(labelTipo(p))}</span></td>
       <td data-l="Tiempo">${p.tipo==="rango"?p.dias+" días":fmtMin(p.minutos)}</td>
       <td data-l="Causa">${esc(p.causa)}</td>
       <td data-l="Estado">${pill(p.estado)}</td></tr>`).join("")}
@@ -500,6 +523,14 @@ function vDirector(){
     <div class="hint">Estado: ${url?'<b style="color:#1F6B41;">● Activo</b>':'<b style="color:#93A2BE;">● Sin configurar</b>'}
       · Requiere actualizar el código de Apps Script (ver instructivo).</div>
 
+    <div class="sect-t">Enlace para los docentes</div>
+    <p class="sub">Este enlace <b>ya lleva la conexión incluida</b>. Quien lo abra queda configurado
+      automáticamente y sus solicitudes llegarán a tu Google Sheets, sin tener que configurar nada.</p>
+    <div class="btn-row">
+      <button class="btn gold" onclick="generarEnlace()">Generar enlace para compartir</button>
+    </div>
+    <div id="msgLink"></div>
+
     <div class="sect-t">Restaurar respaldo</div>
     <div class="btn-row">
       <button class="btn ghost" onclick="document.getElementById('fRest').click()">Restaurar desde JSON</button>
@@ -522,7 +553,7 @@ function pintaTabla(){
     <tbody>${L.map(p=>`<tr>
       <td data-l="Funcionario"><b>${esc(p.nombres)}</b><br><span style="color:#93A2BE;font-size:12px;">${esc(p.cedula)}${p.unidad?" · "+esc(p.unidad):""}</span></td>
       <td data-l="Fecha">${esc(p.fecha)}${p.tipo==="rango"?"<br>→ "+esc(p.fecha_fin):""}${p.hora_ini?`<br><span style="color:#93A2BE;font-size:12px;">${esc(p.hora_ini)}–${esc(p.hora_fin)}</span>`:""}</td>
-      <td data-l="Tipo">${esc(labelTipo(p))}</td>
+      <td data-l="Tipo">${esc(p.clase||"Permiso")}<br><span style="color:#93A2BE;font-size:12px;">${esc(labelTipo(p))}</span></td>
       <td data-l="Tiempo">${p.tipo==="rango"?p.dias+" días":fmtMin(p.minutos)}</td>
       <td data-l="Causa">${esc(p.causa)}${p.observacion?`<br><span style="color:#93A2BE;font-size:12px;">${esc(p.observacion)}</span>`:""}</td>
       <td data-l="Estado">${pill(p.estado)}</td>
@@ -553,23 +584,23 @@ function bajar(nombre, contenido, tipo){
 function csvLinea(arr){ return arr.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")+"\n"; }
 function exportar(){
   // columnas que reconoce el aplicativo de asistencia
-  let s=csvLinea(["Cédula","Nombres","Fecha","Causa","Estado","Observación"]);
+  let s=csvLinea(["Cédula","Nombres","Fecha","Causa","Estado","Observación","Clase"]);
   PERM.forEach(p=>{
     if(p.tipo==="rango"){
       let d=new Date(p.fecha+"T00:00"), fin=new Date(p.fecha_fin+"T00:00");
       while(d<=fin){
         const f=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-        s+=csvLinea([p.cedula,p.nombres,f,p.causa,p.estado,p.observacion]);
+        s+=csvLinea([p.cedula,p.nombres,f,p.causa,p.estado,p.observacion,p.clase||"Permiso"]);
         d.setDate(d.getDate()+1);
       }
-    } else s+=csvLinea([p.cedula,p.nombres,p.fecha,p.causa,p.estado,p.observacion]);
+    } else s+=csvLinea([p.cedula,p.nombres,p.fecha,p.causa,p.estado,p.observacion,p.clase||"Permiso"]);
   });
   bajar("Permisos_para_aplicativo_asistencia.csv", s, "text/csv");
 }
 function exportarCompleto(){
-  let s=csvLinea(["Cédula","Nombres","Unidad","Contratación","Tipo","Fecha","Fecha fin",
+  let s=csvLinea(["Cédula","Nombres","Unidad","Contratación","Clase","Tipo","Fecha","Fecha fin",
                   "Hora inicio","Hora fin","Minutos","Días","Causa","Estado","Observación","Solicitado el","Resuelto el"]);
-  PERM.forEach(p=>s+=csvLinea([p.cedula,p.nombres,p.unidad,p.contrat,labelTipo(p),p.fecha,p.fecha_fin,
+  PERM.forEach(p=>s+=csvLinea([p.cedula,p.nombres,p.unidad,p.contrat,p.clase||"Permiso",labelTipo(p),p.fecha,p.fecha_fin,
     p.hora_ini,p.hora_fin,p.minutos,p.dias,p.causa,p.estado,p.observacion,
     (p.creado||"").slice(0,19).replace("T"," "),(p.resuelto||"").slice(0,19).replace("T"," ")]));
   bajar("Reporte_completo_permisos.csv", s, "text/csv");
@@ -630,7 +661,7 @@ function payloadPermiso(reg){
   return {
     tipoRegistro:"permiso",
     cedula:reg.cedula, nombres:reg.nombres, unidad:reg.unidad, contratacion:reg.contrat,
-    tipo:labelTipo(reg), fecha:reg.fecha, fecha_fin:reg.fecha_fin,
+    tipo:(reg.clase||"Permiso")+" · "+labelTipo(reg), fecha:reg.fecha, fecha_fin:reg.fecha_fin,
     hora_ini:reg.hora_ini, hora_fin:reg.hora_fin,
     minutos:reg.minutos, dias:reg.dias, causa:reg.causa,
     estado:reg.estado, observacion:reg.observacion, solicitado:reg.creado
@@ -644,6 +675,33 @@ function enviarSheets(reg){
   }catch(e){}
   fetch(u,{method:"POST",mode:"no-cors",keepalive:true,headers:{"Content-Type":"text/plain;charset=utf-8"},body}).catch(()=>{});
   return true;
+}
+function generarEnlace(){
+  const u=(document.getElementById("sheetsUrl").value||"").trim();
+  const box=document.getElementById("msgLink");
+  if(!/^https:\/\/script\.google\.com\//.test(u)){
+    box.innerHTML=`<div class="msg err">Primero guarda arriba una dirección válida de Apps Script (debe empezar por https://script.google.com/ y terminar en /exec).</div>`;
+    return;
+  }
+  save(K_SHEETS,u);
+  // base64 apto para URL
+  const b64=btoa(unescape(encodeURIComponent(u))).replace(/\+/g,"-").replace(/\//g,"_");
+  const link=location.origin+location.pathname+"?s="+b64;
+  box.innerHTML=`<div class="msg ok">
+      <b>Enlace listo.</b> Compártelo con los docentes por WhatsApp:
+      <div style="margin:10px 0;padding:10px 12px;background:#fff;border:1px solid #B9CDEC;border-radius:8px;
+                  font-size:12.5px;word-break:break-all;" id="linkTxt">${esc(link)}</div>
+      <button class="btn sm" onclick="copiarEnlace()">Copiar enlace</button>
+    </div>`;
+  window.__link=link;
+}
+function copiarEnlace(){
+  const t=window.__link||"";
+  const done=()=>{ const b=document.getElementById("msgLink");
+    if(b) b.insertAdjacentHTML("beforeend",`<div class="hint" style="color:#1F6B41;">✔ Enlace copiado.</div>`); };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(()=>{}); }
+  else { const ta=document.createElement("textarea"); ta.value=t; document.body.appendChild(ta); ta.select();
+         try{document.execCommand("copy");}catch(e){} document.body.removeChild(ta); done(); }
 }
 function probarSheets(){
   const u=(document.getElementById("sheetsUrl").value||"").trim();
