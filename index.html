@@ -130,7 +130,7 @@ const DIRECTOR_CEDULA = "1123311568";
    aplicativo queda conectado automáticamente, sin configurar nada.
    Debe empezar por https://script.google.com/ y terminar en /exec
    ═══════════════════════════════════════════════════════════════════ */
-const SHEETS_URL_FIJA = "https://script.google.com/macros/s/AKfycbybjCjGLQ-5OAtaKvS7nW4cU6RNUl0a6ivrT7LBGymoc5HBPjDmgtHo_6cxNpFF2GkL9w/exec";
+const SHEETS_URL_FIJA = "";
 
 const K_PERM = "permisos_udr";
 const K_FUNC = "funcionarios_udr";
@@ -691,14 +691,41 @@ function payloadPermiso(reg){
     estado:reg.estado, observacion:reg.observacion, solicitado:reg.creado
   };
 }
+/* Envío por GET con parámetros en la URL.
+   Apps Script responde con un redireccionamiento a googleusercontent.com;
+   un POST por sendBeacon se pierde en esa redirección en varios navegadores
+   de celular. Un GET sí la sigue, por eso este método es el confiable. */
+function urlEnvio(reg){
+  const p = payloadPermiso(reg);
+  const q = Object.keys(p).map(k=>encodeURIComponent(k)+"="+encodeURIComponent(p[k]??"")).join("&");
+  return urlSheets() + (urlSheets().includes("?") ? "&" : "?") + q;
+}
 function enviarSheets(reg){
-  const u=urlSheets(); if(!u) return false;
-  const body=JSON.stringify(payloadPermiso(reg));
+  const base=urlSheets(); if(!base) return false;
+  const url=urlEnvio(reg);
+  let ok=false;
+  // 1) Imagen invisible: es el método que mejor sigue redirecciones en móviles
+  try{ const img=new Image(); img.referrerPolicy="no-referrer"; img.src=url; ok=true; }catch(e){}
+  // 2) Respaldo: petición en segundo plano
+  try{ fetch(url,{method:"GET",mode:"no-cors",keepalive:true,cache:"no-store"}).catch(()=>{}); ok=true; }catch(e){}
+  return ok;
+}
+/* Verificación real: intenta leer la respuesta del script. */
+async function verificarSheets(){
+  const u=urlSheets();
+  if(!u) return {ok:false, msg:"No hay dirección configurada."};
   try{
-    if(navigator.sendBeacon && navigator.sendBeacon(u,new Blob([body],{type:"text/plain;charset=utf-8"}))) return true;
-  }catch(e){}
-  fetch(u,{method:"POST",mode:"no-cors",keepalive:true,headers:{"Content-Type":"text/plain;charset=utf-8"},body}).catch(()=>{});
-  return true;
+    const r = await fetch(u, {method:"GET", cache:"no-store"});
+    const t = await r.text();
+    try{
+      const j = JSON.parse(t);
+      return {ok:true, msg:"Respuesta del script recibida.", data:j};
+    }catch(e){
+      return {ok:false, msg:"El script respondió, pero no en el formato esperado. ¿Actualizaste el código y publicaste una versión nueva?", raw:t.slice(0,300)};
+    }
+  }catch(e){
+    return {ok:false, msg:"No se pudo contactar el script desde el navegador (puede ser normal por seguridad). Usa la prueba de envío.", err:String(e)};
+  }
 }
 function generarEnlace(){
   const u=(document.getElementById("sheetsUrl").value||"").trim();
@@ -727,17 +754,32 @@ function copiarEnlace(){
   else { const ta=document.createElement("textarea"); ta.value=t; document.body.appendChild(ta); ta.select();
          try{document.execCommand("copy");}catch(e){} document.body.removeChild(ta); done(); }
 }
-function probarSheets(){
-  const u=(document.getElementById("sheetsUrl").value||"").trim();
+async function probarSheets(){
   const box=document.getElementById("msgSh");
-  if(!u){ box.innerHTML=`<div class="msg err">Primero pega la dirección que termina en /exec.</div>`; return; }
-  save(K_SHEETS,u);
-  const ok=enviarSheets({cedula:"PRUEBA",nombres:"Registro de prueba",unidad:"—",contrat:"—",
+  const u=urlSheets();
+  if(!u){ box.innerHTML=`<div class="msg err">No hay dirección configurada.</div>`; return; }
+  box.innerHTML=`<div class="msg info">Verificando…</div>`;
+
+  const v = await verificarSheets();
+  let html = `<div class="msg ${v.ok?'ok':'info'}">
+      <b>Dirección en uso:</b><br>
+      <span style="font-size:12px;word-break:break-all;">${esc(u)}</span><br><br>`;
+  if(v.ok && v.data){
+    const hojas=(v.data.hojas||[]).map(h=>`${esc(h.nombre)} (${h.filas} filas)`).join(" · ");
+    html += `✔ <b>El script respondió correctamente.</b><br>${hojas?"Hojas: "+hojas:""}`;
+  } else {
+    html += `${esc(v.msg)}`;
+    if(v.raw) html += `<br><span style="font-size:11.5px;color:#67789B;">Respuesta: ${esc(v.raw)}</span>`;
+  }
+  html += `</div>`;
+  box.innerHTML = html;
+
+  // envío de prueba real
+  enviarSheets({cedula:"PRUEBA",nombres:"Registro de prueba",unidad:"—",contrat:"—",clase:"Permiso",
     tipo:"minutos",fecha:hoy(),fecha_fin:hoy(),hora_ini:"08:00",hora_fin:"08:15",minutos:15,dias:1,
-    causa:"Prueba de conexión",estado:"Solicitado",observacion:"Envío de prueba desde el aplicativo",creado:nowISO()});
-  box.innerHTML = ok
-    ? `<div class="msg ok">Se envió un registro de prueba. Revisa la <b>Hoja 2 (Permisos)</b> de tu Google Sheets: debe aparecer una fila con "Registro de prueba".</div>`
-    : `<div class="msg err">No se pudo enviar. Verifica la dirección.</div>`;
+    causa:"Prueba de conexión",estado:"Solicitado",observacion:"Envío de prueba",creado:nowISO()});
+  box.insertAdjacentHTML("beforeend",
+    `<div class="msg ok">Se envió además un registro de prueba. Revisa la hoja <b>Permisos</b> en unos segundos.</div>`);
 }
 
 /* ---------- arranque ---------- */
